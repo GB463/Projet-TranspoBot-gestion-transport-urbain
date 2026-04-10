@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TranspoBot — Tableau de bord</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .stat-icon-bg { position:absolute; right:1rem; top:50%; transform:translateY(-50%); font-size:2.8rem; opacity:.06; }
+    .trajet-ligne { font-weight:600; }
+    .trajet-meta  { font-size:.78rem; color:var(--slate-2); }
+    .recette      { font-family:var(--font-mono); font-size:.82rem; }
+    .last-refresh { font-size:.72rem; color:var(--slate); text-align:right; margin-top:.5rem; }
+  </style>
+</head>
+<body>
+<nav class="topbar">
+  <div class="topbar-brand"><div class="logo-icon">🚌</div>TranspoBot</div>
+  <div class="topbar-nav">
+    <a href="index.html" class="nav-link active"><span class="icon">📊</span><span class="label">Dashboard</span></a>
+    <a href="vehicules.html" class="nav-link"><span class="icon">🚐</span><span class="label">Flotte</span></a>
+    <a href="chat.html" class="nav-link"><span class="icon">🤖</span><span class="label">Assistant IA</span></a>
+  </div>
+  <div class="topbar-status"><div class="status-dot"></div>API connectée</div>
+</nav>
+
+<main class="page">
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Vue d'ensemble <span>opérationnelle</span></h1>
+      <p class="page-subtitle">Indicateurs en temps réel de la flotte TranspoBot</p>
+    </div>
+    <div class="refresh-timer">🔄 Actualisation dans <strong id="countdown">30</strong>s</div>
+  </div>
+
+  <div class="kpi-grid" id="kpiGrid">
+    <div class="kpi-card"><div class="loading"><div class="spinner"></div></div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🛣️ Trajets récents <span id="trajetCount" style="margin-left:auto;font-size:.75rem;color:var(--slate)"></span></div>
+    <div class="controls">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchTrajets" placeholder="Filtrer par ligne, chauffeur...">
+      </div>
+      <select class="filter-select" id="filterStatut">
+        <option value="">Tous les statuts</option>
+        <option value="planifie">Planifié</option>
+        <option value="en_cours">En cours</option>
+        <option value="termine">Terminé</option>
+        <option value="annule">Annulé</option>
+      </select>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>Ligne</th><th>Chauffeur</th><th>Véhicule</th>
+            <th>Départ</th><th>Arrivée</th><th>Passagers</th><th>Recette</th><th>Statut</th>
+          </tr>
+        </thead>
+        <tbody id="trajetsTbody">
+          <tr><td colspan="8"><div class="loading"><div class="spinner"></div> Chargement...</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination" id="paginationTrajets"></div>
+    <p class="last-refresh" id="lastRefresh"></p>
+  </div>
+</main>
+
+<div class="toast" id="toast">⚠️ <span id="toastMsg"></span></div>
+
+<script src="config.js"></script>
+<script>
+const API = API_BASE;
+let allTrajets = [], currentPage = 1;
+const perPage = 8;
+let countdown = 30;
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+function formatDate(s) {
+  if (!s) return '—';
+  return new Date(s).toLocaleString('fr-FR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+
+function formatMoney(n) {
+  if (n == null) return '—';
+  return Number(n).toLocaleString('fr-FR') + ' F';
+}
+
+function badgeStatut(s) {
+  const map = {
+    planifie:['blue','Planifié'], en_cours:['orange','En cours'],
+    termine:['green','Terminé'], annule:['red','Annulé']
+  };
+  const [cls, label] = map[s] || ['slate', s];
+  return `<span class="badge badge-${cls}">${label}</span>`;
+}
+
+async function loadKPI() {
+  try {
+    const r = await fetch(`${API}/api/stats`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    document.getElementById('kpiGrid').innerHTML = `
+      <div class="kpi-card green" style="position:relative">
+        <div class="kpi-icon">✅</div>
+        <div class="kpi-value">${d.total_trajets}</div>
+        <div class="kpi-label">Trajets terminés</div>
+        <div class="stat-icon-bg">✅</div>
+      </div>
+      <div class="kpi-card orange" style="position:relative">
+        <div class="kpi-icon">🚍</div>
+        <div class="kpi-value">${d.trajets_en_cours}</div>
+        <div class="kpi-label">En cours</div>
+        <div class="stat-icon-bg">🚍</div>
+      </div>
+      <div class="kpi-card blue" style="position:relative">
+        <div class="kpi-icon">🚗</div>
+        <div class="kpi-value">${d.vehicules_actifs}</div>
+        <div class="kpi-label">Véhicules actifs</div>
+        <div class="stat-icon-bg">🚗</div>
+      </div>
+      <div class="kpi-card red" style="position:relative">
+        <div class="kpi-icon">⚠️</div>
+        <div class="kpi-value">${d.incidents_ouverts}</div>
+        <div class="kpi-label">Incidents ouverts</div>
+        <div class="stat-icon-bg">⚠️</div>
+      </div>
+      <div class="kpi-card" style="position:relative">
+        <div class="kpi-icon">💰</div>
+        <div class="kpi-value">${Number(d.recette_totale).toLocaleString('fr-FR')}</div>
+        <div class="kpi-label">Recette totale (F)</div>
+        <div class="stat-icon-bg">💰</div>
+      </div>
+    `;
+  } catch(e) {
+    showToast('Impossible de charger les KPI : ' + e.message);
+  }
+}
+
+async function loadTrajets() {
+  try {
+    const r = await fetch(`${API}/api/trajets/recent`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    allTrajets = await r.json();
+    applyFilters();
+    document.getElementById('lastRefresh').textContent = 'Dernière actualisation : ' + new Date().toLocaleTimeString('fr-FR');
+  } catch(e) {
+    showToast('Impossible de charger les trajets : ' + e.message);
+  }
+}
+
+function applyFilters() {
+  const q = document.getElementById('searchTrajets').value.toLowerCase();
+  const s = document.getElementById('filterStatut').value;
+  const data = allTrajets.filter(t =>
+    (!q || (t.ligne||'').toLowerCase().includes(q) || (t.chauffeur_nom||'').toLowerCase().includes(q)) &&
+    (!s || t.statut === s)
+  );
+  currentPage = 1;
+  renderTrajets(data);
+}
+
+function renderTrajets(data) {
+  const total = data.length;
+  document.getElementById('trajetCount').textContent = `${total} trajet${total!==1?'s':''}`;
+  const pages = Math.ceil(total/perPage)||1;
+  const slice = data.slice((currentPage-1)*perPage, currentPage*perPage);
+  const tbody = document.getElementById('trajetsTbody');
+  if (!slice.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">Aucun résultat</div></div></td></tr>`;
+  } else {
+    tbody.innerHTML = slice.map(t => `<tr>
+      <td><div class="trajet-ligne">${t.ligne||'—'}</div></td>
+      <td><div class="trajet-meta">${t.chauffeur_nom||'—'}</div></td>
+      <td><div class="trajet-meta" style="font-family:var(--font-mono)">${t.immatriculation||'—'}</div></td>
+      <td>${formatDate(t.date_heure_depart)}</td>
+      <td>${formatDate(t.date_heure_arrivee)}</td>
+      <td style="text-align:center">${t.nb_passagers??'—'}</td>
+      <td class="recette">${formatMoney(t.recette)}</td>
+      <td>${badgeStatut(t.statut)}</td>
+    </tr>`).join('');
+  }
+  const pg = document.getElementById('paginationTrajets');
+  if (pages <= 1) { pg.innerHTML = ''; return; }
+  let html = `<button onclick="goPage(${currentPage-1})" ${currentPage===1?'disabled':''}>‹</button>`;
+  for (let i=1; i<=pages; i++) html += `<button class="${i===currentPage?'active':''}" onclick="goPage(${i})">${i}</button>`;
+  html += `<button onclick="goPage(${currentPage+1})" ${currentPage===pages?'disabled':''}>›</button>`;
+  html += `<span class="pagination-info">${(currentPage-1)*perPage+1}–${Math.min(currentPage*perPage,total)} / ${total}</span>`;
+  pg.innerHTML = html;
+}
+
+function goPage(p) {
+  const q = document.getElementById('searchTrajets').value.toLowerCase();
+  const s = document.getElementById('filterStatut').value;
+  const data = allTrajets.filter(t =>
+    (!q || (t.ligne||'').toLowerCase().includes(q) || (t.chauffeur_nom||'').toLowerCase().includes(q)) &&
+    (!s || t.statut === s)
+  );
+  const pages = Math.ceil(data.length/perPage)||1;
+  currentPage = Math.max(1, Math.min(p, pages));
+  renderTrajets(data);
+}
+
+document.getElementById('searchTrajets').addEventListener('input', applyFilters);
+document.getElementById('filterStatut').addEventListener('change', applyFilters);
+
+setInterval(() => {
+  countdown--;
+  document.getElementById('countdown').textContent = countdown;
+  if (countdown <= 0) { loadKPI(); loadTrajets(); countdown = 30; }
+}, 1000);
+
+loadKPI();
+loadTrajets();
+</script>
+</body>
+</html>
